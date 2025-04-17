@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>五目並べ - 泥仕合ゲーム</title>
+  <style>
+    body { display:flex; flex-direction:column; align-items:center; font-family:sans-serif; }
+    #dice { margin:20px; font-size:2rem; }
+    canvas { background:#F5DEB3; border:2px solid #333; }
+    #status { margin:10px; }
+    #reset { margin:10px; }
+  </style>
+</head>
+<body>
+  <h1>五目並べ - 泥仕合ゲーム</h1>
+  <div id="dice">サイコロを振っています...</div>
+  <canvas id="board" width="480" height="480"></canvas>
+  <div id="status"></div>
+  <button id="reset">リセット</button>
+
+  <script>
+    const SIZE = 15;
+    const CELL = 32;
+    const board = Array(SIZE).fill(null).map(() => Array(SIZE).fill(0));
+    const canvas = document.getElementById('board');
+    const ctx = canvas.getContext('2d');
+    const status = document.getElementById('status');
+    let playerTurn = true;
+    let gameOver = false;
+
+    // draw grid
+    function drawGrid() {
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      for (let i=0;i<=SIZE;i++) {
+        ctx.beginPath();
+        ctx.moveTo(CELL/2+i*CELL, CELL/2);
+        ctx.lineTo(CELL/2+i*CELL, CELL/2+SIZE*CELL);
+        ctx.moveTo(CELL/2, CELL/2+i*CELL);
+        ctx.lineTo(CELL/2+SIZE*CELL, CELL/2+i*CELL);
+        ctx.stroke();
+      }
+      // stones
+      for (let y=0;y<SIZE;y++) for (let x=0;x<SIZE;x++) {
+        if (board[y][x]) {
+          ctx.beginPath();
+          ctx.arc(CELL/2 + x*CELL, CELL/2 + y*CELL, CELL*0.4, 0, 2*Math.PI);
+          ctx.fillStyle = board[y][x]===1? '#000':'#FFF';
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+    }
+
+    // check win for a player (1 or 2)
+    function checkWin(player) {
+      for (let y=0;y<SIZE;y++) for (let x=0;x<SIZE;x++) if (board[y][x]===player) {
+        const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+        for (let [dx,dy] of dirs) {
+          let cnt=1;
+          let nx=x+dx, ny=y+dy;
+          while (ny>=0&&ny<SIZE&&nx>=0&&nx<SIZE&&board[ny][nx]===player) { cnt++; nx+=dx; ny+=dy; }
+          if (cnt>=5) return true;
+        }
+      }
+      return false;
+    }
+
+    // AI move: block player winning or extend muddy fight
+    function aiMove() {
+      if (gameOver) return;
+      // first, block any player's imminent win
+      const blocks = [];
+      for (let y=0;y<SIZE;y++) for (let x=0;x<SIZE;x++) if (!board[y][x]) {
+        board[y][x]=1;
+        if (checkWin(1)) blocks.push({x,y});
+        board[y][x]=0;
+      }
+      if (blocks.length) {
+        const b = blocks[Math.floor(Math.random()*blocks.length)];
+        board[b.y][b.x]=2;
+      } else {
+        // choose random safe cell: don't let AI win
+        const safe = [];
+        for (let y=0;y<SIZE;y++) for (let x=0;x<SIZE;x++) if (!board[y][x]) {
+          board[y][x]=2;
+          const win = checkWin(2);
+          board[y][x]=0;
+          if (!win) safe.push({x,y});
+        }
+        if (safe.length) {
+          const s = safe[Math.floor(Math.random()*safe.length)];
+          board[s.y][s.x]=2;
+        } else {
+          // no safe: pick random
+          const empties = [];
+          for (let y=0;y<SIZE;y++) for (let x=0;x<SIZE;x++) if (!board[y][x]) empties.push({x,y});
+          if (empties.length) {
+            const e = empties[Math.floor(Math.random()*empties.length)];
+            board[e.y][e.x]=2;
+          }
+        }
+      }
+      drawGrid();
+      if (checkWin(2)) { gameOver=true; status.textContent='コンピュータの勝ち！'; }
+      else { playerTurn=true; status.textContent='あなたの番です。'; }
+    }
+
+    // handle click
+    canvas.addEventListener('click', e=>{
+      if (!playerTurn||gameOver) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = Math.floor((e.clientX-rect.left - CELL/2)/CELL + 0.5);
+      const y = Math.floor((e.clientY-rect.top - CELL/2)/CELL + 0.5);
+      if (x<0||x>=SIZE||y<0||y>=SIZE||board[y][x]) return;
+      board[y][x]=1; drawGrid();
+      if (checkWin(1)) { gameOver=true; status.textContent='あなたの勝ち！'; return; }
+      playerTurn=false; status.textContent='コンピュータの番です...';
+      setTimeout(aiMove, 500);
+    });
+
+    // reset
+    document.getElementById('reset').addEventListener('click',()=>location.reload());
+
+    // dice roll to decide first
+    function rollDice() {
+      const el = document.getElementById('dice');
+      let count=0;
+      const iv = setInterval(()=>{
+        const n = Math.floor(Math.random()*6)+1;
+        el.textContent = `サイコロ: ${n}`;
+        count++;
+        if (count>=20) {
+          clearInterval(iv);
+          const first = Math.random()<0.5?'あなた':'コンピュータ';
+          playerTurn = (first==='あなた');
+          el.textContent = `先攻: ${first}`;
+          status.textContent = playerTurn?'あなたの番です。':'コンピュータの番です。';
+          if (!playerTurn) setTimeout(aiMove, 1000);
+        }
+      }, 100);
+    }
+    drawGrid(); rollDice();
+  </script>
+</body>
+</html>

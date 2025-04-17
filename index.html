@@ -7,9 +7,9 @@
   <style>
     body { display:flex; flex-direction:column; align-items:center; font-family:sans-serif; }
     #dice { margin:20px; font-size:2rem; }
-    canvas { background:#F5DEB3; border:2px solid #333; }
-    #status { margin:10px; }
-    #reset { margin:10px; }
+    canvas { background:#F5DEB3; border:2px solid #333; cursor: pointer; }
+    #status { margin:10px; font-weight: bold; }
+    #reset { margin:10px; padding: 5px 10px; }
   </style>
 </head>
 <body>
@@ -21,210 +21,470 @@
 
   <script>
     const SIZE = 15;
-    const CELL = 32;
-    const board = Array.from({length: SIZE}, () => Array(SIZE).fill(0));
+    const CELL = 32; // (480 / 15)
+    const board = Array.from({length: SIZE}, () => Array(SIZE).fill(0)); // 0: empty, 1: player, 2: AI
     const canvas = document.getElementById('board');
     const ctx = canvas.getContext('2d');
     const status = document.getElementById('status');
-    let playerTurn = true;
+    const diceEl = document.getElementById('dice');
+    const resetBtn = document.getElementById('reset');
+    let playerTurn = true; // true: player, false: AI
     let gameOver = false;
 
+    // --- 定数 ---
+    const WIN_SCORE = 100000;
+    const OPEN_FOUR_SCORE = 50000; // _OOOO_
+    const CLOSED_FOUR_SCORE_A = 4000; // XOOOO_ or _OOOOX
+    const CLOSED_FOUR_SCORE_B = 3500; // OOOOO_ or _OOOOO
+    const OPEN_THREE_SCORE = 5000; // _OOO_
+    const CLOSED_THREE_SCORE_A = 400; // XOOO_ or _OOOX
+    const CLOSED_THREE_SCORE_B = 350; // OOOO_ or _OOOO
+    const OPEN_TWO_SCORE = 50; // _OO_
+    const CLOSED_TWO_SCORE_A = 10; // XOO_ or _OOX
+    const CLOSED_TWO_SCORE_B = 5;  // OOO_ or _OOO
+
+    // --- 描画関連 ---
     function drawGrid() {
-      ctx.clearRect(0,0,canvas.width,canvas.height);
-      for (let i=0;i<=SIZE;i++) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#F5DEB3"; // 背景色
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = '#666'; // 線の色を少し薄く
+      ctx.lineWidth = 1;
+
+      // グリッド線描画
+      for (let i = 0; i < SIZE; i++) {
+        // 縦線
         ctx.beginPath();
-        ctx.moveTo(CELL/2 + i*CELL, CELL/2);
-        ctx.lineTo(CELL/2 + i*CELL, CELL/2 + SIZE*CELL);
-        ctx.moveTo(CELL/2, CELL/2 + i*CELL);
-        ctx.lineTo(CELL/2 + SIZE*CELL, CELL/2 + i*CELL);
+        ctx.moveTo(CELL / 2 + i * CELL, CELL / 2);
+        ctx.lineTo(CELL / 2 + i * CELL, canvas.height - CELL / 2);
+        ctx.stroke();
+        // 横線
+        ctx.beginPath();
+        ctx.moveTo(CELL / 2, CELL / 2 + i * CELL);
+        ctx.lineTo(canvas.width - CELL / 2, CELL / 2 + i * CELL);
         ctx.stroke();
       }
-      for (let y=0;y<SIZE;y++) for (let x=0;x<SIZE;x++) {
-        if (board[y][x]) {
+
+      // 星（目印）の描画 (オプション)
+      const starPoints = [
+          {x: 3, y: 3}, {x: 11, y: 3}, {x: 7, y: 7}, {x: 3, y: 11}, {x: 11, y: 11}
+      ];
+      ctx.fillStyle = '#555';
+      for(const p of starPoints) {
           ctx.beginPath();
-          ctx.arc(CELL/2 + x*CELL, CELL/2 + y*CELL, CELL * 0.4, 0, 2*Math.PI);
-          ctx.fillStyle = board[y][x] === 1 ? '#000' : '#FFF';
+          ctx.arc(CELL/2 + p.x*CELL, CELL/2 + p.y*CELL, CELL * 0.1, 0, 2*Math.PI);
           ctx.fill();
-          ctx.stroke();
+      }
+
+
+      // 石の描画
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          if (board[y][x]) {
+            ctx.beginPath();
+            ctx.arc(CELL / 2 + x * CELL, CELL / 2 + y * CELL, CELL * 0.4, 0, 2 * Math.PI);
+            ctx.fillStyle = board[y][x] === 1 ? '#000' : '#FFF';
+            ctx.fill();
+            // 石に枠線を追加して見やすく
+            ctx.strokeStyle = board[y][x] === 1 ? '#555' : '#AAA';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
         }
       }
     }
 
+    // --- ゲームロジック ---
     function checkWin(player) {
-      const dirs = [[1,0],[0,1],[1,1],[1,-1]];
-      for (let y=0;y<SIZE;y++) for (let x=0;x<SIZE;x++) if (board[y][x] === player) {
-        for (let [dx,dy] of dirs) {
-          let count = 1;
-          for (let dir of [1, -1]) {
-            let nx = x + dx*dir;
-            let ny = y + dy*dir;
-            while (ny >= 0 && ny < SIZE && nx >= 0 && nx < SIZE && board[ny][nx] === player) {
-              count++;
-              nx += dx * dir;
-              ny += dy * dir;
+      const dirs = [[1, 0], [0, 1], [1, 1], [1, -1]]; // 横, 縦, 右下, 右上
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          if (board[y][x] === player) {
+            for (let [dx, dy] of dirs) {
+              let count = 1;
+              // 正方向
+              for (let i = 1; i < 5; i++) {
+                const nx = x + dx * i;
+                const ny = y + dy * i;
+                if (ny >= 0 && ny < SIZE && nx >= 0 && nx < SIZE && board[ny][nx] === player) {
+                  count++;
+                } else {
+                  break;
+                }
+              }
+              // 負方向 (checkWinでは不要だが、評価関数では必要)
+              // for (let i = 1; i < 5; i++) {
+              //   const nx = x - dx * i;
+              //   const ny = y - dy * i;
+              //   if (ny >= 0 && ny < SIZE && nx >= 0 && nx < SIZE && board[ny][nx] === player) {
+              //     count++;
+              //   } else {
+              //     break;
+              //   }
+              // }
+              if (count >= 5) return true;
             }
           }
-          if (count >= 5) return true;
         }
       }
       return false;
     }
 
-    function evaluateThreats(player) {
-      const dirs = [[1,0],[0,1],[1,1],[1,-1]];
-      const threats = [];
-      for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
-        if (!board[y][x]) {
-          board[y][x] = player;
-          let maxScore = 0;
-          for (let [dx,dy] of dirs) {
-            let count = 1;
-            let ends = 0;
-            for (let dir of [1, -1]) {
-              let nx = x + dx * dir;
-              let ny = y + dy * dir;
-              while (ny >= 0 && ny < SIZE && nx >= 0 && nx < SIZE && board[ny][nx] === player) {
-                count++;
-                nx += dx * dir;
-                ny += dy * dir;
-              }
-              if (ny >= 0 && ny < SIZE && nx >= 0 && nx < SIZE && board[ny][nx] === 0) ends++;
-            }
-            // オープン4、オープン3を重視
-            let score = 0;
-            if (count >= 5) score = 5;
-            else if (count === 4 && ends > 0) score = 4;
-            else if (count === 3 && ends > 1) score = 3;
-            else score = count;
-            maxScore = Math.max(maxScore, score);
-          }
-          board[y][x] = 0;
-          threats.push({x, y, score: maxScore});
-        }
+    // --- AI評価関数 ---
+
+    // (x,y) を中心とした指定方向のライン情報を取得
+    function getLine(x, y, dx, dy, player) {
+      const line = [player]; // 中心は評価対象のプレイヤーの石と仮定
+      const opponent = 3 - player;
+      // 正方向
+      for (let i = 1; i < 6; i++) {
+        const nx = x + dx * i;
+        const ny = y + dy * i;
+        let cell;
+        if (nx < 0 || nx >= SIZE || ny < 0 || ny >= SIZE) cell = 'X'; // 盤外
+        else cell = board[ny][nx];
+        line.push(cell);
+        if (cell === 'X' || cell === opponent) break; // 盤外か相手の石で終了
       }
-      return threats;
+      // 負方向
+      for (let i = 1; i < 6; i++) {
+        const nx = x - dx * i;
+        const ny = y - dy * i;
+        let cell;
+        if (nx < 0 || nx >= SIZE || ny < 0 || ny >= SIZE) cell = 'X'; // 盤外
+        else cell = board[ny][nx];
+        line.unshift(cell);
+        if (cell === 'X' || cell === opponent) break; // 盤外か相手の石で終了
+      }
+      return line;
     }
 
+    // ライン情報からスコアを計算
+    function calculateScoreForLine(line, player) {
+      const opponent = 3 - player;
+      const s = line.map(c => c === player ? 'P' : (c === 0 ? '_' : (c === opponent ? 'O' : 'X'))).join('');
+      let score = 0;
+
+      // 5連 (勝利)
+      if (s.includes('PPPPP')) return WIN_SCORE;
+
+      // オープン4 (_PPPP_)
+      if (s.includes('_PPPP_')) score += OPEN_FOUR_SCORE;
+      // クローズド4 (XPPPP_ or _PPPPX)
+      if (s.includes('XPPPP_') || s.includes('_PPPPX')) score += CLOSED_FOUR_SCORE_A;
+      // クローズド4 (OPPPP_ or _PPPPO)
+      if (s.includes('OPPPP_') || s.includes('_PPPPO')) score += CLOSED_FOUR_SCORE_B;
+
+      // 飛び4 (P_PPP or PPP_P) - 評価に含めるか検討
+      // if (s.includes('_P_PPP_') || s.includes('_PPP_P_')) score += OPEN_FOUR_SCORE / 2; // 例
+
+      // オープン3 (__PPP__ or _PPP__)
+      if (s.includes('_PPP_')) score += OPEN_THREE_SCORE;
+      // クローズド3 (XPPP_ or _PPPX)
+      if (s.includes('XPPP_') || s.includes('_PPPX')) score += CLOSED_THREE_SCORE_A;
+      // クローズド3 (OPPP_ or _PPPO)
+      if (s.includes('OPPP_') || s.includes('_PPPO')) score += CLOSED_THREE_SCORE_B;
+
+       // 飛び3 (P_PP_ or _PP_P_) - 評価に含めるか検討
+      // if (s.includes('_P_PP_') || s.includes('_PP_P_')) score += OPEN_THREE_SCORE / 2; // 例
+
+      // オープン2 (__PP__)
+      if (s.includes('_PP_')) score += OPEN_TWO_SCORE;
+      // クローズド2 (XPP_ or _PPX)
+      if (s.includes('XPP_') || s.includes('_PPX')) score += CLOSED_TWO_SCORE_A;
+      // クローズド2 (OPP_ or _PPO)
+      if (s.includes('OPP_') || s.includes('_PPO')) score += CLOSED_TWO_SCORE_B;
+
+      return score;
+    }
+
+    // (x,y) に player が置いた場合の評価スコアを計算
+    function evaluateMove(x, y, player) {
+      if (board[y][x] !== 0) return -Infinity; // 置けない場所
+
+      board[y][x] = player; // 仮に置いてみる
+      let score = 0;
+      const dirs = [[1, 0], [0, 1], [1, 1], [1, -1]];
+      let win = false;
+
+      for (const [dx, dy] of dirs) {
+        const line = getLine(x, y, dx, dy, player);
+        const lineScore = calculateScoreForLine(line, player);
+        if (lineScore >= WIN_SCORE) win = true;
+        score += lineScore;
+      }
+
+      board[y][x] = 0; // 元に戻す
+
+      if (win) return WIN_SCORE;
+      return score;
+    }
+
+    // --- AIの思考 ---
     function aiMove() {
       if (gameOver) return;
 
-      // 1. プレイヤーの5連を必ず阻止
-      const defense = evaluateThreats(1);
-      let candidates = defense.filter(t => t.score >= 5);
-      if (candidates.length) {
-        const choice = candidates[Math.floor(Math.random() * candidates.length)];
-        board[choice.y][choice.x] = 2;
-        drawGrid();
-        playerTurn = true;
-        status.textContent = 'あなたの番です。';
-        return;
-      }
+      const aiPlayer = 2;
+      const humanPlayer = 1;
+      let possibleMoves = []; // 打てる全ての空きマス
 
-      // 2. プレイヤーの4連（オープン4含む）を阻止
-      candidates = defense.filter(t => t.score === 4);
-      if (candidates.length) {
-        const choice = candidates[Math.floor(Math.random() * candidates.length)];
-        board[choice.y][choice.x] = 2;
-        drawGrid();
-        playerTurn = true;
-        status.textContent = 'あなたの番です。';
-        return;
-      }
+      // 1. 事前計算: AI勝利手、プレイヤー勝利手、プレイヤーオープン4/クローズド4の手
+      let winningMoves = [];
+      let blockingMoves = [];
+      let blockOpenFourMoves = [];
+      let blockClosedFourMoves = [];
 
-      // 3. AI自身が5連になる手は絶対に選ばない
-      // 4. どちらも4連以上を作らせない手を優先
-      const offense = evaluateThreats(2);
-      // AIが5連になる手を除外
-      const safeOffense = offense.filter(t => {
-        board[t.y][t.x] = 2;
-        const win = checkWin(2);
-        board[t.y][t.x] = 0;
-        return !win;
-      });
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          if (board[y][x] === 0) {
+            possibleMoves.push({ x, y });
 
-      // プレイヤーもAIも4連以上を作らせない手を優先
-      let bestMoves = [];
-      let minMaxThreat = 99;
-      for (const move of safeOffense) {
-        board[move.y][move.x] = 2;
-        // その手を打った後のプレイヤーの最大脅威度
-        const afterDefense = evaluateThreats(1);
-        const maxThreat = Math.max(...afterDefense.map(t => t.score), 0);
-        board[move.y][move.x] = 0;
-        if (maxThreat < minMaxThreat) {
-          minMaxThreat = maxThreat;
-          bestMoves = [move];
-        } else if (maxThreat === minMaxThreat) {
-          bestMoves.push(move);
+            // AI勝利チェック
+            const aiScore = evaluateMove(x, y, aiPlayer);
+            if (aiScore >= WIN_SCORE) {
+              winningMoves.push({ x, y });
+            }
+
+            // プレイヤー勝利チェック
+            const humanScore = evaluateMove(x, y, humanPlayer);
+            if (humanScore >= WIN_SCORE) {
+              blockingMoves.push({ x, y });
+            }
+            // プレイヤーオープン4チェック
+            else if (humanScore >= OPEN_FOUR_SCORE) {
+              blockOpenFourMoves.push({ x, y, score: humanScore });
+            }
+            // プレイヤークローズド4チェック
+            else if (humanScore >= CLOSED_FOUR_SCORE_B) { // クローズド4の最低スコア以上
+              blockClosedFourMoves.push({ x, y, score: humanScore });
+            }
+          }
         }
       }
-      if (bestMoves.length) {
-        // できるだけ膠着しやすい手（脅威度が最小の手）を選ぶ
-        const choice = bestMoves[Math.floor(Math.random() * bestMoves.length)];
-        board[choice.y][choice.x] = 2;
-        drawGrid();
-        playerTurn = true;
-        status.textContent = 'あなたの番です。';
+
+      // --- 手の選択ロジック ---
+
+      // 最優先: プレイヤーの即勝利を防ぐ
+      if (blockingMoves.length > 0) {
+        const choice = blockingMoves[0]; // 複数あっても一つ防げば良い
+        console.log("AI Move: Block immediate win at", choice);
+        makeMove(choice.x, choice.y, aiPlayer);
         return;
       }
 
-      // 5. それでも詰み状態なら、AIが勝たない範囲でランダムに置く
-      const safe = [];
-      for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
-        if (!board[y][x]) {
-          board[y][x] = 2;
-          if (!checkWin(2)) safe.push({x, y});
-          board[y][x] = 0;
+      // 次優先: プレイヤーのオープン4を防ぐ (AIが勝たない手を選ぶ)
+      if (blockOpenFourMoves.length > 0) {
+        blockOpenFourMoves.sort((a, b) => b.score - a.score); // 脅威の高い順
+        for (const choice of blockOpenFourMoves) {
+          // その手がAIの勝利にならないかチェック
+          if (!winningMoves.some(wm => wm.x === choice.x && wm.y === choice.y)) {
+            console.log("AI Move: Block open four at", choice);
+            makeMove(choice.x, choice.y, aiPlayer);
+            return;
+          }
+        }
+        // AIが勝ってしまう場合、この段階では打たない (泥仕合のため)
+         console.log("AI Info: Blocking open four leads to AI win, skipping.");
+      }
+
+       // 次優先: プレイヤーのクローズド4を防ぐ (AIが勝たない手を選ぶ)
+      if (blockClosedFourMoves.length > 0) {
+        blockClosedFourMoves.sort((a, b) => b.score - a.score); // 脅威の高い順
+        for (const choice of blockClosedFourMoves) {
+          // その手がAIの勝利にならないかチェック
+          if (!winningMoves.some(wm => wm.x === choice.x && wm.y === choice.y)) {
+            console.log("AI Move: Block closed four at", choice);
+            makeMove(choice.x, choice.y, aiPlayer);
+            return;
+          }
+        }
+         console.log("AI Info: Blocking closed four leads to AI win, skipping.");
+      }
+
+      // 泥仕合戦略: AIが勝たず、プレイヤーの脅威も低い手を選ぶ
+      let mudMoves = [];
+      for (const move of possibleMoves) {
+        // AIが勝つ手は除外
+        if (winningMoves.some(wm => wm.x === move.x && wm.y === move.y)) {
+          continue;
+        }
+
+        // その手に打った場合の評価
+        board[move.y][move.x] = aiPlayer;
+
+        // プレイヤーの次の最大脅威を評価
+        let maxPlayerThreatAfter = 0;
+        for (let ny = 0; ny < SIZE; ny++) {
+          for (let nx = 0; nx < SIZE; nx++) {
+            if (board[ny][nx] === 0) {
+              const playerThreatScore = evaluateMove(nx, ny, humanPlayer);
+              maxPlayerThreatAfter = Math.max(maxPlayerThreatAfter, playerThreatScore);
+            }
+          }
+        }
+
+        // AI自身の脅威を評価
+        const aiThreatScore = evaluateMove(move.x, move.y, aiPlayer); // 再計算が必要
+
+        board[move.y][move.x] = 0; // 戻す
+
+        // 泥仕合の条件:
+        // - AIが勝たない (上でチェック済み)
+        // - プレイヤーの次の手が即勝利にならない (maxPlayerThreatAfter < WIN_SCORE)
+        // - プレイヤーの次の手がオープン4にならない (maxPlayerThreatAfter < OPEN_FOUR_SCORE)
+        // - AI自身もオープン4以上を作らない (aiThreatScore < OPEN_FOUR_SCORE)
+        if (maxPlayerThreatAfter < OPEN_FOUR_SCORE && aiThreatScore < OPEN_FOUR_SCORE) {
+          mudMoves.push({
+            x: move.x,
+            y: move.y,
+            playerThreat: maxPlayerThreatAfter, // 打った後の相手の最大脅威
+            aiThreat: aiThreatScore // 自分が打った手の脅威
+          });
         }
       }
-      if (safe.length) {
-        const choice = safe[Math.floor(Math.random() * safe.length)];
-        board[choice.y][choice.x] = 2;
+
+      if (mudMoves.length > 0) {
+        // プレイヤーの次の脅威が最も低い手を選ぶ
+        mudMoves.sort((a, b) => a.playerThreat - b.playerThreat);
+        const bestPlayerThreat = mudMoves[0].playerThreat;
+        // 同じ脅威レベルの手が複数あれば、AI自身の脅威も低いものを選ぶ
+        const bestMudMoves = mudMoves.filter(m => m.playerThreat === bestPlayerThreat);
+        bestMudMoves.sort((a, b) => a.aiThreat - b.aiThreat);
+
+        const choice = bestMudMoves[0]; // 最も泥仕合に適した手
+        console.log("AI Move: Mud strategy at", choice, "Player Threat:", choice.playerThreat, "AI Threat:", choice.aiThreat);
+        makeMove(choice.x, choice.y, aiPlayer);
+        return;
       }
-      drawGrid();
-      playerTurn = true;
-      status.textContent = 'あなたの番です。';
+
+      // 上記で見つからない場合 (詰み状態に近い or 選択肢がない)
+      // AIが勝たないランダムな手を選ぶ
+      let safeMoves = possibleMoves.filter(move =>
+          !winningMoves.some(wm => wm.x === move.x && wm.y === move.y)
+      );
+
+      if (safeMoves.length > 0) {
+        const choice = safeMoves[Math.floor(Math.random() * safeMoves.length)];
+        console.log("AI Move: Safe random move at", choice);
+        makeMove(choice.x, choice.y, aiPlayer);
+      } else {
+        // 本当に打つ手がない場合 (AIが必ず勝ってしまう状況 or 盤面が埋まっている)
+        if (possibleMoves.length > 0) {
+            // AIが勝つしかない状況なら、仕方なく勝つ手を選ぶ（泥仕合失敗）
+            if (winningMoves.length > 0) {
+                const choice = winningMoves[0];
+                console.warn("AI Move: Forced to win at", choice);
+                makeMove(choice.x, choice.y, aiPlayer);
+            } else {
+                // 勝つ手もないがsafeMoveもない？ -> 最初の可能な手に打つ
+                 const choice = possibleMoves[0];
+                 console.warn("AI Move: No safe moves, placing at first possible", choice);
+                 makeMove(choice.x, choice.y, aiPlayer);
+            }
+        } else {
+             console.error("AI Move: No possible moves left!");
+             checkGameEnd(aiPlayer); // 引き分け判定へ
+        }
+      }
     }
+
+    // --- ゲーム進行 ---
+
+    function makeMove(x, y, player) {
+        if (gameOver || board[y][x] !== 0) return false; // 不正な手は無視
+
+        board[y][x] = player;
+        drawGrid();
+        checkGameEnd(player); // 手を打ったプレイヤーを渡す
+        return true;
+    }
+
+
+    function checkGameEnd(lastPlayer) {
+        if (checkWin(lastPlayer)) {
+            gameOver = true;
+            if (lastPlayer === 1) {
+                status.textContent = 'あなたの勝ち！';
+            } else {
+                status.textContent = 'コンピュータの勝ち！ (あれ？泥仕合のはずが...)';
+            }
+            canvas.style.cursor = 'default';
+        } else if (board.flat().every(cell => cell !== 0)) { // 引き分けチェック
+            gameOver = true;
+            status.textContent = '引き分け！(泥仕合成功？)';
+            canvas.style.cursor = 'default';
+        } else {
+            // ゲーム続行、ターン交代
+            if (lastPlayer === 1) { // プレイヤーが打った後
+                playerTurn = false;
+                status.textContent = 'コンピュータの番です...';
+                canvas.style.cursor = 'wait'; // AI思考中は待機カーソル
+                setTimeout(() => {
+                    aiMove();
+                    // aiMove内でcheckGameEndが呼ばれるので、ここでは何もしない
+                    // ただし、aiMoveが何もせずに終了した場合(エラー等)を考慮するなら必要
+                    if (!gameOver) { // aiMove内でゲームが終わらなかった場合
+                       canvas.style.cursor = 'pointer';
+                    }
+                }, 500); // AIの思考時間
+            } else { // AIが打った後
+                playerTurn = true;
+                status.textContent = 'あなたの番です。';
+                canvas.style.cursor = 'pointer';
+            }
+        }
+    }
+
 
     canvas.addEventListener('click', e => {
       if (!playerTurn || gameOver) return;
       const rect = canvas.getBoundingClientRect();
-      const x = Math.floor((e.clientX - rect.left - CELL/2) / CELL + 0.5);
-      const y = Math.floor((e.clientY - rect.top - CELL/2) / CELL + 0.5);
-      if (x < 0 || x >= SIZE || y < 0 || y >= SIZE || board[y][x]) return;
-      board[y][x] = 1;
-      drawGrid();
-      if (checkWin(1)) {
-        gameOver = true;
-        status.textContent = 'あなたの勝ち！';
-        return;
-      }
-      playerTurn = false;
-      status.textContent = 'コンピュータの番です...';
-      setTimeout(aiMove, 500);
+      // マスの中心をクリックしやすくするための調整は不要かも
+      // const x = Math.floor((e.clientX - rect.left - CELL/2) / CELL + 0.5);
+      // const y = Math.floor((e.clientY - rect.top - CELL/2) / CELL + 0.5);
+      const x = Math.floor((e.clientX - rect.left) / CELL);
+      const y = Math.floor((e.clientY - rect.top) / CELL);
+
+      if (x < 0 || x >= SIZE || y < 0 || y >= SIZE) return;
+
+      makeMove(x, y, 1); // プレイヤー(1)が手を打つ
     });
 
-    document.getElementById('reset').addEventListener('click', () => location.reload());
+    resetBtn.addEventListener('click', () => location.reload());
 
     function rollDice() {
-      const el = document.getElementById('dice');
       let count = 0;
       const iv = setInterval(() => {
         const n = Math.floor(Math.random() * 6) + 1;
-        el.textContent = `サイコロ: ${n}`;
-        if (++count >= 20) {
+        diceEl.textContent = `サイコロ: ${n}`;
+        if (++count >= 15) { // 少し短縮
           clearInterval(iv);
-          const first = Math.random() < 0.5 ? 'あなた' : 'コンピュータ';
-          playerTurn = (first === 'あなた');
-          el.textContent = `先攻: ${first}`;
-          status.textContent = playerTurn ? 'あなたの番です。' : 'コンピュータの番です。';
-          if (!playerTurn) setTimeout(aiMove, 1000);
+          const firstPlayerIsHuman = Math.random() < 0.5;
+          playerTurn = firstPlayerIsHuman;
+          const firstName = firstPlayerIsHuman ? 'あなた' : 'コンピュータ';
+          diceEl.textContent = `先攻: ${firstName}`;
+
+          if (playerTurn) {
+            status.textContent = 'あなたの番です。';
+            canvas.style.cursor = 'pointer';
+          } else {
+            status.textContent = 'コンピュータの番です...';
+            canvas.style.cursor = 'wait';
+            setTimeout(() => {
+                aiMove();
+                 if (!gameOver) {
+                    canvas.style.cursor = 'pointer';
+                 }
+            }, 1000); // 最初のAIの手は少し待つ
+          }
         }
       }, 100);
     }
 
+    // --- 初期化 ---
     drawGrid();
     rollDice();
+
   </script>
 </body>
 </html>

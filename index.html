@@ -70,28 +70,36 @@
       return false;
     }
 
-    function evaluateThreats() {
+    function evaluateThreats(player) {
       const dirs = [[1,0],[0,1],[1,1],[1,-1]];
       const threats = [];
-      for (let y=0;y<SIZE;y++) for (let x=0;x<SIZE;x++) {
+      for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
         if (!board[y][x]) {
-          let maxCount = 0;
-          board[y][x] = 1; // プレイヤー石を仮置き
+          board[y][x] = player;
+          let maxScore = 0;
           for (let [dx,dy] of dirs) {
             let count = 1;
+            let ends = 0;
             for (let dir of [1, -1]) {
-              let nx = x + dx*dir;
-              let ny = y + dy*dir;
-              while (ny >= 0 && ny < SIZE && nx >= 0 && nx < SIZE && board[ny][nx] === 1) {
+              let nx = x + dx * dir;
+              let ny = y + dy * dir;
+              while (ny >= 0 && ny < SIZE && nx >= 0 && nx < SIZE && board[ny][nx] === player) {
                 count++;
                 nx += dx * dir;
                 ny += dy * dir;
               }
+              if (ny >= 0 && ny < SIZE && nx >= 0 && nx < SIZE && board[ny][nx] === 0) ends++;
             }
-            maxCount = Math.max(maxCount, count);
+            // オープン4、オープン3を重視
+            let score = 0;
+            if (count >= 5) score = 5;
+            else if (count === 4 && ends > 0) score = 4;
+            else if (count === 3 && ends > 1) score = 3;
+            else score = count;
+            maxScore = Math.max(maxScore, score);
           }
           board[y][x] = 0;
-          threats.push({x, y, score: maxCount});
+          threats.push({x, y, score: maxScore});
         }
       }
       return threats;
@@ -99,40 +107,43 @@
 
     function aiMove() {
       if (gameOver) return;
-      // 1) 直前の勝利阻止: score==5
-      const threats = evaluateThreats();
-      const winThreats = threats.filter(t => t.score >= 5);
-      if (winThreats.length) {
-        const choice = winThreats[Math.floor(Math.random() * winThreats.length)];
+      const defense = evaluateThreats(1);
+      // 1) プレイヤーの直前勝利 (5並び) の阻止
+      let candidates = defense.filter(t => t.score >= 5);
+      // 2) オープン4 の阻止
+      if (!candidates.length) candidates = defense.filter(t => t.score >= 4);
+      // 3) ダブルスリーやオープン3 の阻止
+      if (!candidates.length) candidates = defense.filter(t => t.score === 3);
+      if (candidates.length) {
+        const choice = candidates[Math.floor(Math.random() * candidates.length)];
         board[choice.y][choice.x] = 2;
       } else {
-        // 2) 高スコア脅威阻止: score>=3
-        const high = threats.filter(t => t.score >= 3);
-        if (high.length) {
-          const maxScore = Math.max(...high.map(t => t.score));
-          const candidates = high.filter(t => t.score === maxScore);
-          const choice = candidates[Math.floor(Math.random() * candidates.length)];
+        // 自分が勝たない安全手をオフェンス評価から選択
+        const offense = evaluateThreats(2);
+        const safeOffense = offense.filter(t => {
+          board[t.y][t.x] = 2;
+          const win = checkWin(2);
+          board[t.y][t.x] = 0;
+          return !win;
+        });
+        if (safeOffense.length) {
+          const minScore = Math.min(...safeOffense.map(t => t.score));
+          const offs = safeOffense.filter(t => t.score === minScore);
+          const choice = offs[Math.floor(Math.random() * offs.length)];
           board[choice.y][choice.x] = 2;
         } else {
-          // 3) 自勝利回避
+          // 安全なランダム手
           const safe = [];
-          for (let y=0;y<SIZE;y++) for (let x=0;x<SIZE;x++) {
+          for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
             if (!board[y][x]) {
               board[y][x] = 2;
-              if (!checkWin(2)) safe.push({x,y});
+              if (!checkWin(2)) safe.push({x, y});
               board[y][x] = 0;
             }
           }
           if (safe.length) {
-            const s = safe[Math.floor(Math.random() * safe.length)];
-            board[s.y][s.x] = 2;
-          } else {
-            const empties = [];
-            for (let y=0;y<SIZE;y++) for (let x=0;x<SIZE;x++) if (!board[y][x]) empties.push({x,y});
-            if (empties.length) {
-              const e = empties[Math.floor(Math.random() * empties.length)];
-              board[e.y][e.x] = 2;
-            }
+            const choice = safe[Math.floor(Math.random() * safe.length)];
+            board[choice.y][choice.x] = 2;
           }
         }
       }

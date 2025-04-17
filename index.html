@@ -107,54 +107,83 @@
 
     function aiMove() {
       if (gameOver) return;
+
+      // 1. プレイヤーの5連を必ず阻止
       const defense = evaluateThreats(1);
-      // 1) プレイヤーの直前勝利 (5並び) の阻止
       let candidates = defense.filter(t => t.score >= 5);
-      // 2) オープン4 の阻止
-      if (!candidates.length) candidates = defense.filter(t => t.score >= 4);
-      // 3) ダブルスリーやオープン3 の阻止
-      if (!candidates.length) candidates = defense.filter(t => t.score === 3);
       if (candidates.length) {
         const choice = candidates[Math.floor(Math.random() * candidates.length)];
         board[choice.y][choice.x] = 2;
-      } else {
-        // 自分が勝たない安全手をオフェンス評価から選択
-        const offense = evaluateThreats(2);
-        const safeOffense = offense.filter(t => {
-          board[t.y][t.x] = 2;
-          const win = checkWin(2);
-          board[t.y][t.x] = 0;
-          return !win;
-        });
-        if (safeOffense.length) {
-          const minScore = Math.min(...safeOffense.map(t => t.score));
-          const offs = safeOffense.filter(t => t.score === minScore);
-          const choice = offs[Math.floor(Math.random() * offs.length)];
-          board[choice.y][choice.x] = 2;
-        } else {
-          // 安全なランダム手
-          const safe = [];
-          for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
-            if (!board[y][x]) {
-              board[y][x] = 2;
-              if (!checkWin(2)) safe.push({x, y});
-              board[y][x] = 0;
-            }
-          }
-          if (safe.length) {
-            const choice = safe[Math.floor(Math.random() * safe.length)];
-            board[choice.y][choice.x] = 2;
-          }
-        }
-      }
-      drawGrid();
-      if (checkWin(2)) {
-        gameOver = true;
-        status.textContent = 'コンピュータの勝ち！';
-      } else {
+        drawGrid();
         playerTurn = true;
         status.textContent = 'あなたの番です。';
+        return;
       }
+
+      // 2. プレイヤーの4連（オープン4含む）を阻止
+      candidates = defense.filter(t => t.score === 4);
+      if (candidates.length) {
+        const choice = candidates[Math.floor(Math.random() * candidates.length)];
+        board[choice.y][choice.x] = 2;
+        drawGrid();
+        playerTurn = true;
+        status.textContent = 'あなたの番です。';
+        return;
+      }
+
+      // 3. AI自身が5連になる手は絶対に選ばない
+      // 4. どちらも4連以上を作らせない手を優先
+      const offense = evaluateThreats(2);
+      // AIが5連になる手を除外
+      const safeOffense = offense.filter(t => {
+        board[t.y][t.x] = 2;
+        const win = checkWin(2);
+        board[t.y][t.x] = 0;
+        return !win;
+      });
+
+      // プレイヤーもAIも4連以上を作らせない手を優先
+      let bestMoves = [];
+      let minMaxThreat = 99;
+      for (const move of safeOffense) {
+        board[move.y][move.x] = 2;
+        // その手を打った後のプレイヤーの最大脅威度
+        const afterDefense = evaluateThreats(1);
+        const maxThreat = Math.max(...afterDefense.map(t => t.score), 0);
+        board[move.y][move.x] = 0;
+        if (maxThreat < minMaxThreat) {
+          minMaxThreat = maxThreat;
+          bestMoves = [move];
+        } else if (maxThreat === minMaxThreat) {
+          bestMoves.push(move);
+        }
+      }
+      if (bestMoves.length) {
+        // できるだけ膠着しやすい手（脅威度が最小の手）を選ぶ
+        const choice = bestMoves[Math.floor(Math.random() * bestMoves.length)];
+        board[choice.y][choice.x] = 2;
+        drawGrid();
+        playerTurn = true;
+        status.textContent = 'あなたの番です。';
+        return;
+      }
+
+      // 5. それでも詰み状態なら、AIが勝たない範囲でランダムに置く
+      const safe = [];
+      for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+        if (!board[y][x]) {
+          board[y][x] = 2;
+          if (!checkWin(2)) safe.push({x, y});
+          board[y][x] = 0;
+        }
+      }
+      if (safe.length) {
+        const choice = safe[Math.floor(Math.random() * safe.length)];
+        board[choice.y][choice.x] = 2;
+      }
+      drawGrid();
+      playerTurn = true;
+      status.textContent = 'あなたの番です。';
     }
 
     canvas.addEventListener('click', e => {
